@@ -1,0 +1,256 @@
+
+Option Explicit
+
+Public Sub CreateAllScreenshots()
+
+    Dim cfg As Worksheet
+    Dim ws As Worksheet
+    Dim sourceRange As Range
+    Dim sourceChart As ChartObject
+
+    Dim tempWb As Workbook
+    Dim tempWs As Worksheet
+    Dim tempChart As ChartObject
+    Dim pic As Shape
+
+    Dim rootPath As String
+    Dim dateFolder As String
+    Dim filePath As String
+    Dim fileName As String
+    Dim sheetName As String
+    Dim rangeAddress As String
+    Dim chartName As String
+    Dim timeStamp As String
+
+    Dim lastRow As Long
+    Dim r As Long
+    Dim counter As Long
+    Dim errors As Long
+
+    Dim tableWidth As Double
+    Dim tableHeight As Double
+    Dim chartWidth As Double
+    Dim chartHeight As Double
+
+    Dim oldScreenUpdating As Boolean
+    Dim oldEnableEvents As Boolean
+    Dim oldAlerts As Boolean
+
+    On Error GoTo FatalError
+
+    ' Check configuration sheet
+    Set cfg = ThisWorkbook.Worksheets("ShotConfig")
+
+    If ThisWorkbook.Path = "" Then
+        MsgBox "Save the workbook first.", vbExclamation
+        Exit Sub
+    End If
+
+    rootPath = ThisWorkbook.Path & "\Reports"
+
+    If Dir(rootPath, vbDirectory) = "" Then
+        MkDir rootPath
+    End If
+
+    dateFolder = rootPath & "\" & Format(Date, "dd.mm.yyyy")
+
+    If Dir(dateFolder, vbDirectory) = "" Then
+        MkDir dateFolder
+    End If
+
+    timeStamp = Format(Now, "hh-nn-ss")
+
+    oldScreenUpdating = Application.ScreenUpdating
+    oldEnableEvents = Application.EnableEvents
+    oldAlerts = Application.DisplayAlerts
+
+    Application.ScreenUpdating = False
+    Application.EnableEvents = False
+    Application.DisplayAlerts = False
+
+    ' Temporary workbook for combined images
+    Set tempWb = Workbooks.Add(xlWBATWorksheet)
+    Set tempWs = tempWb.Worksheets(1)
+
+    lastRow = cfg.Cells(cfg.Rows.Count, "A").End(xlUp).Row
+
+    ' Process every configuration row
+    For r = 2 To lastRow
+
+        On Error GoTo RowError
+
+        sheetName = Trim(CStr(cfg.Cells(r, "A").Value))
+        rangeAddress = Trim(CStr(cfg.Cells(r, "B").Value))
+        chartName = Trim(CStr(cfg.Cells(r, "C").Value))
+        fileName = Trim(CStr(cfg.Cells(r, "D").Value))
+
+        If sheetName = "" Or rangeAddress = "" _
+           Or chartName = "" Or fileName = "" Then
+            GoTo NextRow
+        End If
+
+        ' Find source worksheet
+        Set ws = ThisWorkbook.Worksheets(sheetName)
+
+        ' Find table range
+        Set sourceRange = ws.Range(rangeAddress)
+
+        ' Find chart by its object name
+        Set sourceChart = ws.ChartObjects(chartName)
+
+        tableWidth = sourceRange.Width
+        tableHeight = sourceRange.Height
+
+        chartWidth = sourceChart.Width
+        chartHeight = sourceChart.Height
+
+        ' Create temporary canvas
+        Set tempChart = tempWs.ChartObjects.Add( _
+            Left:=0, _
+            Top:=0, _
+            Width:=Application.Max(tableWidth, chartWidth) + 20, _
+            Height:=tableHeight + chartHeight + 40)
+
+        tempChart.Chart.ChartArea.Format.Fill.ForeColor.RGB = RGB(255, 255, 255)
+        tempChart.Chart.ChartArea.Format.Line.Visible = msoFalse
+
+        ' Copy table as picture
+        sourceRange.CopyPicture _
+            Appearance:=xlScreen, _
+            Format:=xlPicture
+
+        DoEvents
+
+        tempChart.Activate
+        tempChart.Chart.Paste
+
+        DoEvents
+
+        Set pic = tempChart.Chart.Shapes( _
+            tempChart.Chart.Shapes.Count)
+
+        pic.LockAspectRatio = msoFalse
+        pic.Left = 10
+        pic.Top = 10
+        pic.Width = tableWidth
+        pic.Height = tableHeight
+
+        ' Copy chart as picture
+        sourceChart.CopyPicture _
+            Appearance:=xlScreen, _
+            Format:=xlPicture
+
+        DoEvents
+
+        tempChart.Activate
+        tempChart.Chart.Paste
+
+        DoEvents
+
+        Set pic = tempChart.Chart.Shapes( _
+            tempChart.Chart.Shapes.Count)
+
+        pic.LockAspectRatio = msoFalse
+        pic.Left = 10
+        pic.Top = tableHeight + 25
+        pic.Width = chartWidth
+        pic.Height = chartHeight
+
+        ' Build output filename
+        filePath = dateFolder & "\" & _
+                   CleanName(fileName) & "_" & _
+                   timeStamp & ".png"
+
+        ' Export combined image
+        If tempChart.Chart.Export( _
+            fileName:=filePath, _
+            FilterName:="PNG") Then
+
+            counter = counter + 1
+        Else
+            errors = errors + 1
+        End If
+
+        ' Remove temporary canvas
+        tempChart.Delete
+        Set tempChart = Nothing
+
+NextRow:
+
+        Set sourceRange = Nothing
+        Set sourceChart = Nothing
+        Set ws = Nothing
+
+        On Error GoTo FatalError
+
+    Next r
+
+    ' Close temporary workbook
+    tempWb.Close SaveChanges:=False
+    Set tempWb = Nothing
+
+    Application.CutCopyMode = False
+
+    Application.ScreenUpdating = oldScreenUpdating
+    Application.EnableEvents = oldEnableEvents
+    Application.DisplayAlerts = oldAlerts
+
+    MsgBox "Screenshots completed!" & vbCrLf & _
+           "Created: " & counter & vbCrLf & _
+           "Errors: " & errors & vbCrLf & _
+           "Folder: " & dateFolder, vbInformation
+
+    Exit Sub
+
+RowError:
+
+    errors = errors + 1
+
+    On Error Resume Next
+
+    If Not tempChart Is Nothing Then
+        tempChart.Delete
+    End If
+
+    Set tempChart = Nothing
+    Set sourceRange = Nothing
+    Set sourceChart = Nothing
+    Set ws = Nothing
+
+    Application.CutCopyMode = False
+
+    On Error GoTo FatalError
+
+    Resume Next
+
+FatalError:
+
+    On Error Resume Next
+
+    If Not tempWb Is Nothing Then
+        tempWb.Close SaveChanges:=False
+    End If
+
+    Application.ScreenUpdating = oldScreenUpdating
+    Application.EnableEvents = oldEnableEvents
+    Application.DisplayAlerts = oldAlerts
+
+    MsgBox "Fatal error: " & Err.Description, vbCritical
+
+End Sub
+
+
+Private Function CleanName(ByVal fileName As String) As String
+
+    Dim chars As Variant
+    Dim item As Variant
+
+    chars = Array("\", "/", ":", "*", "?", """", "<", ">", "|")
+
+    For Each item In chars
+        fileName = Replace(fileName, item, "_")
+    Next item
+
+    CleanName = fileName
+
+End Function
